@@ -1,19 +1,20 @@
 import os
+import glob
 import threading
 import cv2
 import numpy as np
-import pyautogui
 import tkinter as tk
 from tkinter import filedialog
 from playsound import playsound
 from mss import mss, ScreenShotError
 
-sec_interval = 0.5
+sec_interval = 3
 
-bell_state = {
-    'seen': False,
-    'ringed': False
-}
+
+class bell_state:
+    seen = False
+    ringed = False
+
 
 # init mss
 sct = mss()
@@ -22,6 +23,7 @@ sct = mss()
 root = tk.Tk()
 root.withdraw()
 
+# ask for image file path
 watching_img_path = filedialog.askopenfilename(
     initialdir=os.getcwd(),
     title='Select a bell image to watch',
@@ -31,24 +33,49 @@ watching_img_path = filedialog.askopenfilename(
 if not watching_img_path:
     exit()
 
+watching_img = cv2.imread(watching_img_path)
+
+# remove previous temporary images
+fileList = glob.glob('./.screenshot[0-9_-]*.png')
+
+for filePath in fileList:
+    try:
+        os.remove(filePath)
+    except OSError:
+        print('error deleting file ' + filePath)
+
 
 def process():
-    i = 1
+    monitor_num = 1
     while True:
         try:
-            monitor = sct.monitors[i]
+            # make & format screenshot
+            monitor = sct.monitors[monitor_num]
+            screenshot = sct.grab(monitor)
+            screenshot = np.asarray(screenshot.pixels)
+            screenshot_uint8 = screenshot.astype(np.uint8)
 
             # find bell
-            bell_coords = pyautogui.locateOnScreen(watching_img_path, confidence=0.5, grayscale=True)
+            result = cv2.matchTemplate(watching_img, screenshot_uint8, cv2.TM_SQDIFF_NORMED)
 
-            if bell_coords:
+            # get minimum squared difference
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+            if min_val != 1.0:
+                # extract coordinates of the best match
+                mpx, mpy = min_loc
+
+                # get size of the template
+                trows, tcols = watching_img.shape[:2]
+
                 scrap = {
-                    'left': bell_coords[0],
-                    'top': bell_coords[1],
-                    'width': bell_coords[2],
-                    'height': bell_coords[3]
+                    'left': mpx,
+                    'top': mpy,
+                    'width': trows,
+                    'height': tcols
                 }
-                bell = np.asarray(sct.grab(scrap))
+                bell = sct.grab(scrap)
+                bell = np.asarray(bell)
 
                 # create hsv
                 hsv = cv2.cvtColor(bell, cv2.COLOR_BGR2HSV)
@@ -91,9 +118,9 @@ def process():
                 bell_state.seen = False
                 bell_state.ringed = False
 
-            i += 1
+            monitor_num += 1
 
-            if i == len(sct.monitors):
+            if monitor_num == len(sct.monitors):
                 break
         except ScreenShotError:
             break
